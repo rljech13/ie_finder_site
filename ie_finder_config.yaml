@@ -1,5 +1,6 @@
 paths:
-  config_file: "ie_finder_config.yaml"
+  # Thresholds for the element search; see that file.
+  search_params: "search_params.yaml"
   genomes_dir: "data/genomes"
   results_dir: "results"
 
@@ -8,20 +9,6 @@ execution:
 
 annotate:
   all_candidates: false
-
-# Same cascade as MGE_finder at the commit in UPSTREAM, without cohort deduplication.
-filters:
-  trna_max_distance_bp: 500
-  v3ps_shift: 3
-  attl_window_bp: 300000
-  attl_candidate_min_bp: 8
-  attl_exact_min_bp: 14
-  attl_relaxed_min_bp: 17
-  attl_reject_gapped: true
-  integrase_min_aa: 300
-  ie_min_nt: 0
-
-reject_ambiguous_n_ie: false
 
 pfam_profiles:
   - "pfam/PF00589.hmm"

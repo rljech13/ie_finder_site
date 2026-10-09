@@ -1,5 +1,6 @@
 import os
 import glob
+import sys
 
 
 configfile: "ie_finder_config.yaml"
@@ -10,6 +11,14 @@ PFAM_LIST = config["pfam_profiles"]
 PFAM_CLI_ARGS = " ".join(f"--pfam '{pfam}'" for pfam in PFAM_LIST)
 ALL_CANDIDATES = bool(config.get("annotate", {}).get("all_candidates", False))
 FINDER = os.path.join(workflow.basedir, "scripts")
+
+sys.path.insert(0, FINDER)
+from v3ps_filters import load_thresholds
+
+# Search thresholds live in their own file. Loading it here stops a run with an
+# unknown key or a bad value before any step starts.
+SEARCH_PARAMS = config["paths"].get("search_params", "search_params.yaml")
+THRESHOLDS = load_thresholds(SEARCH_PARAMS)
 
 COMBINED_HMM = os.path.join(RESULTS_DIR, "combined", "pfam_combined.hmm")
 
@@ -132,7 +141,7 @@ rule trna_proximity:
         os.path.join(RESULTS_DIR, "{sample}", "trna_proximity.log")
     params:
         finder=FINDER,
-        max_distance=config.get("filters", {}).get("trna_max_distance_bp", 500),
+        max_distance=THRESHOLDS.trna_max_distance_bp,
     shell:
         """
         python {params.finder}/annotate_trna_proximity.py --integrases {input.integrases} --trna {input.trna} --output {output.proximity} --max_distance {params.max_distance} > {log} 2>&1
@@ -157,7 +166,8 @@ rule blast_mge:
     input:
         fna=os.path.join(GENOMES_DIR, "{sample}.fna"),
         integrases=os.path.join(RESULTS_DIR, "{sample}", "integrase_hits_summary.tsv"),
-        query=os.path.join(RESULTS_DIR, "{sample}", "mge_query.fa")
+        query=os.path.join(RESULTS_DIR, "{sample}", "mge_query.fa"),
+        search_params=SEARCH_PARAMS,
     output:
         blast_tsv=os.path.join(RESULTS_DIR, "{sample}", "mge_blast.tsv"),
         blast_raw=os.path.join(RESULTS_DIR, "{sample}", "mge_blast_raw.tsv"),
@@ -165,10 +175,9 @@ rule blast_mge:
         os.path.join(RESULTS_DIR, "{sample}", "blast_mge.log")
     params:
         finder=FINDER,
-        config=config["paths"].get("config_file", "ie_finder_config.yaml"),
     shell:
         """
-        python {params.finder}/annotate_mge_region.py --ffn {input.fna} --integrases {input.integrases} --query {input.query} --out_tsv {output.blast_tsv} --tmp_dir . --config {params.config} > {log} 2>&1
+        python {params.finder}/annotate_mge_region.py --ffn {input.fna} --integrases {input.integrases} --query {input.query} --out_tsv {output.blast_tsv} --tmp_dir . --params {input.search_params} > {log} 2>&1
         """
 
 rule extract_mge_region:
@@ -223,7 +232,7 @@ rule filter_confident_ie:
         mge_gbk=os.path.join(RESULTS_DIR, "{sample}", "mge_annotated.gbk"),
         orfs_gff=os.path.join(RESULTS_DIR, "{sample}", "orfs.gff"),
         fasta=os.path.join(GENOMES_DIR, "{sample}.fna"),
-        config=config["paths"].get("config_file", "ie_finder_config.yaml"),
+        search_params=SEARCH_PARAMS,
     output:
         fa=os.path.join(RESULTS_DIR, "{sample}", "ie_confident.fa"),
         gbk=os.path.join(RESULTS_DIR, "{sample}", "ie_confident.gbk"),
@@ -243,7 +252,7 @@ rule filter_confident_ie:
             --mge-gbk {input.mge_gbk} \
             --orfs-gff {input.orfs_gff} \
             --fasta {input.fasta} \
-            --config {input.config} \
+            --params {input.search_params} \
             --out-fa {output.fa} \
             --out-gbk {output.gbk} \
             --out-audit {output.audit} \

@@ -6,9 +6,11 @@
 #   ./run.sh genomes_dir outdir
 #   ANNOTATE_ALL=1 ./run.sh strain.fasta outdir
 #   KEEP_WORK=1 ./run.sh strain.fasta outdir
+#   SEARCH_PARAMS=strict.yaml ./run.sh strain.fasta outdir
 #
 # The first run creates the conda environment named in envs/IE_finder.yaml
-# and puts it on PATH. Later runs reuse it. Thresholds stay in ie_finder_config.yaml.
+# and puts it on PATH. Later runs reuse it. Search thresholds are in
+# search_params.yaml. SEARCH_PARAMS names a file whose keys override them.
 #
 # Extra arguments after the outdir are passed to Snakemake.
 
@@ -48,7 +50,19 @@ if [[ ! -e "$INPUT" ]]; then
   exit 1
 fi
 
+BASE_PARAMS="$SCRIPT_DIR/search_params.yaml"
+USER_PARAMS=""
+if [[ -n "${SEARCH_PARAMS:-}" ]]; then
+  USER_PARAMS="$(abspath "$SEARCH_PARAMS")"
+  if [[ ! -f "$USER_PARAMS" ]]; then
+    echo "Search parameters not found: $USER_PARAMS" >&2
+    exit 1
+  fi
+fi
+
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/ie_finder_site.XXXXXX")"
+# The values this run actually used: search_params.yaml plus SEARCH_PARAMS.
+PARAMS_USED="$WORK/search_params.yaml"
 UPSTREAM_COMMIT="$(awk -F': ' '/^commit:/{print $2; exit}' "$SCRIPT_DIR/UPSTREAM")"
 
 write_reports() {
@@ -63,6 +77,7 @@ write_reports() {
       --sample "$sample" \
       --mge-finder "$SCRIPT_DIR" \
       --upstream-commit "$UPSTREAM_COMMIT" \
+      --params "${PARAMS_USED:-}" \
       --out "$OUTDIR/${sample}.ie.report.txt" \
       || echo "Could not write a report for $sample" >&2
   done
@@ -201,7 +216,8 @@ ensure_runtime() {
 ensure_runtime
 
 CONFIG="$WORK/config.yaml"
-python3 - "$SCRIPT_DIR/ie_finder_config.yaml" "$CONFIG" "$SCRIPT_DIR" "$GENOMES" "$RESULTS" "${ANNOTATE_ALL:-0}" << 'PY'
+python3 - "$SCRIPT_DIR/ie_finder_config.yaml" "$CONFIG" "$SCRIPT_DIR" "$GENOMES" "$RESULTS" "${ANNOTATE_ALL:-0}" \
+  "$BASE_PARAMS" "$USER_PARAMS" "$PARAMS_USED" << 'PY'
 import sys
 from pathlib import Path
 
@@ -210,11 +226,28 @@ try:
 except ImportError:
     sys.exit("PyYAML is required")
 
-src, dst, root, genomes, results, annotate_all = sys.argv[1:7]
-cfg = yaml.safe_load(Path(src).read_text()) or {}
+src, dst, root, genomes, results, annotate_all, base_params, user_params, params_used = sys.argv[1:10]
 root = Path(root)
+sys.path.insert(0, str(root / "scripts"))
+from v3ps_filters import read_params_file, thresholds_from_params, thresholds_to_params
+
+# Each file is checked on its own so an error names the file it came from.
+try:
+    params = read_params_file(base_params)
+    thresholds_from_params(params, base_params)
+    if user_params:
+        override = read_params_file(user_params)
+        thresholds_from_params(override, user_params)
+        params.update(override)
+    thresholds = thresholds_from_params(params)
+except (OSError, ValueError, yaml.YAMLError) as exc:
+    sys.exit(f"Search parameters: {exc}")
+Path(params_used).write_text(yaml.safe_dump(thresholds_to_params(thresholds), sort_keys=False))
+
+cfg = yaml.safe_load(Path(src).read_text()) or {}
 cfg.setdefault("paths", {})
-cfg["paths"]["config_file"] = dst
+cfg["paths"].pop("config_file", None)
+cfg["paths"]["search_params"] = params_used
 cfg["paths"]["genomes_dir"] = genomes
 cfg["paths"]["results_dir"] = results
 cfg.setdefault("execution", {})

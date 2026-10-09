@@ -6,13 +6,13 @@ The pipeline reads a genome assembly in FASTA and writes attL/attR, the integras
 
 ## What an element is
 
-A confident element is a phage-type tyrosine integrase next to an opposite-strand tRNA, with a direct repeat of that tRNA 3′ end. The integrase is longer than 300 aa, attL does not overlap a CDS, and the repeat is either an exact run of at least 14 bp or a BLAST hit of at least 17 bp without alignment gaps. Those thresholds are `filters` in `ie_finder_config.yaml`. Cohort deduplication from the main repository is not part of this copy.
+A confident element is a phage-type tyrosine integrase next to an opposite-strand tRNA, with a direct repeat of that tRNA 3′ end. The integrase is longer than 300 aa, attL does not overlap a CDS, and the repeat is either an exact run of at least 14 bp or a BLAST hit of at least 17 bp. Alignment gaps in the repeat are allowed. Setting `attl_reject_gapped: true` rejects them, as the published finder did. Among the BLAST hits anchored at the tRNA 3′ end, attL is the one with the highest bitscore, so a long but poor match far from the tRNA does not win over a near-perfect repeat. Setting `attl_select_by: length` takes the longest hit instead, as the published finder did. Those thresholds are in `search_params.yaml`. Cohort deduplication from the main repository is not part of this copy.
 
 ## Requirements
 
 Linux. The first `./run.sh` builds the conda environment named in `envs/IE_finder.yaml` (`IE_finder_site`): Snakemake, Python 3.10, Biopython, pandas, PyYAML, Prodigal, HMMER, Aragorn, and BLAST+. Later runs reuse that environment. The first build needs a network connection.
 
-If `conda` is already installed, the script uses it. Otherwise it installs Miniforge into `~/miniforge3` (`MINIFORGE_ROOT` changes that directory) and creates the environment there. Thresholds stay in `ie_finder_config.yaml`.
+If `conda` is already installed, the script uses it. Otherwise it installs Miniforge into `~/miniforge3` (`MINIFORGE_ROOT` changes that directory) and creates the environment there.
 
 ## Install
 
@@ -60,6 +60,7 @@ Intermediate tables, BLAST output, and the cut-out island sequences are written 
 ```bash
 ANNOTATE_ALL=1 ./run.sh TTHB27c.fasta outdir
 KEEP_WORK=1 ./run.sh TTHB27c.fasta outdir
+SEARCH_PARAMS=strict.yaml ./run.sh TTHB27c.fasta outdir
 ./run.sh TTHB27c.fasta outdir --cores 8
 ```
 
@@ -69,12 +70,20 @@ No activation step. `./run.sh` puts `IE_finder_site` on `PATH` for that run. Aft
 
 `KEEP_WORK=1` leaves the temporary directory. The path is printed only when a run fails or when this flag is set. Use it to see the raw tables behind the report.
 
+`SEARCH_PARAMS=strict.yaml` reads search thresholds from that file on top of `search_params.yaml`. Keys set in it win, and keys left out keep their values from `search_params.yaml`. An unknown key or a bad value stops the run before any step starts. For example, a file with these two lines brings back the published attL rules:
+
+```yaml
+attl_select_by: length
+attl_reject_gapped: true
+```
+
 Arguments after the output directory are passed to Snakemake.
 
 ## The report
 
-`strain.ie.report.txt` is the log for that genome. It has four blocks:
+`strain.ie.report.txt` is the log for that genome. It has five blocks:
 
+- `search_params` — the thresholds this run used, after any `SEARCH_PARAMS` override
 - `counts` — integrase HMM hits, integrase–tRNA pairs, attL BLAST hits, how many passed
 - `candidates` — one line each: `confident` or `rejected` plus the first failing reason (`exact_run_too_short`, a CDS overlap, an integrase shorter than 300 aa, a gapped alignment)
 - `published_coordinates` and `audit` — the full tables, so a rejected locus can be reconstructed without the temporary files

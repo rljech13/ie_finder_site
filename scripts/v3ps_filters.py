@@ -16,6 +16,12 @@
 Every candidate gets a full audit row. ``reject_reason`` is the first failing
 step in the order above.
 
+The reported attL is one of the 3'-anchored, strand-consistent BLAST hits in
+the search window. By default it is the hit with the highest bitscore, so a
+long but poor alignment far from the tRNA (often a second copy of the tRNA
+gene) does not win over a shorter, near-perfect repeat. ``attl_select_by:
+length`` restores the published rule, which takes the longest hit.
+
 The exact run is the longest perfect match of the reported attL against the
 tRNA region, starting at the anchored end, with an offset of up to ``shift``
 bases to absorb indels.
@@ -26,7 +32,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import pandas as pd
 import yaml
@@ -39,6 +45,8 @@ DEFAULT_ATTL_EXACT_MIN_BP = 14
 DEFAULT_ATTL_RELAXED_MIN_BP = 17
 DEFAULT_INTEGRASE_MIN_AA = 300
 DEFAULT_IE_MIN_NT = 0
+DEFAULT_ATTL_SELECT_BY = "bitscore"
+ATTL_SELECT_CHOICES = ("bitscore", "length")
 
 
 @dataclass(frozen=True)
@@ -58,6 +66,9 @@ class FilterThresholds:
         integrase_min_aa: Integrases of this length and shorter are rejected.
         ie_min_nt: Minimum element length in nucleotides; 0 disables the filter.
         reject_ambiguous_n_ie: Reject elements containing ambiguous N bases.
+        attl_select_by: How the reported attL is chosen among anchored hits:
+            ``bitscore`` (best alignment) or ``length`` (longest hit, the
+            published rule).
     """
 
     shift: int = DEFAULT_SHIFT
@@ -70,30 +81,112 @@ class FilterThresholds:
     integrase_min_aa: int = DEFAULT_INTEGRASE_MIN_AA
     ie_min_nt: int = DEFAULT_IE_MIN_NT
     reject_ambiguous_n_ie: bool = False
+    attl_select_by: str = DEFAULT_ATTL_SELECT_BY
 
 
-def load_thresholds(config_path: Path | str | None) -> FilterThresholds:
-    """Load thresholds from ``ie_finder_config.yaml``; defaults when absent."""
-    if config_path is None:
+# search_params.yaml key -> FilterThresholds field, in the order of that file.
+PARAM_FIELDS: dict[str, str] = {
+    "trna_max_distance_bp": "trna_max_distance_bp",
+    "v3ps_shift": "shift",
+    "attl_window_bp": "attl_window_bp",
+    "attl_candidate_min_bp": "attl_candidate_min_bp",
+    "attl_exact_min_bp": "attl_exact_min_bp",
+    "attl_relaxed_min_bp": "attl_relaxed_min_bp",
+    "attl_reject_gapped": "attl_reject_gapped",
+    "attl_select_by": "attl_select_by",
+    "integrase_min_aa": "integrase_min_aa",
+    "ie_min_nt": "ie_min_nt",
+    "reject_ambiguous_n_ie": "reject_ambiguous_n_ie",
+}
+_BOOL_PARAMS = {"attl_reject_gapped", "reject_ambiguous_n_ie"}
+
+
+def _as_bool(key: str, value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"true", "yes", "1"}:
+        return True
+    if text in {"false", "no", "0"}:
+        return False
+    raise ValueError(f"{key} must be true or false, got {value!r}")
+
+
+def _as_int(key: str, value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{key} must be a whole number, got {value!r}")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be a whole number, got {value!r}") from None
+
+
+def thresholds_from_params(
+    params: Mapping[str, Any], source: str = "search parameters"
+) -> FilterThresholds:
+    """Build thresholds from ``search_params.yaml`` keys; omitted keys keep their defaults.
+
+    Raises:
+        ValueError: on an unknown key or a value of the wrong kind, so a typo
+            does not silently fall back to a default.
+    """
+    unknown = sorted(set(params) - set(PARAM_FIELDS))
+    if unknown:
+        raise ValueError(
+            f"{source}: unknown search parameter(s): {', '.join(unknown)}. "
+            f"Known: {', '.join(PARAM_FIELDS)}"
+        )
+    values: dict[str, Any] = {}
+    for key, value in params.items():
+        field = PARAM_FIELDS[key]
+        try:
+            if key in _BOOL_PARAMS:
+                values[field] = _as_bool(key, value)
+            elif key == "attl_select_by":
+                choice = str(value).strip().lower()
+                if choice not in ATTL_SELECT_CHOICES:
+                    raise ValueError(
+                        f"attl_select_by must be one of {', '.join(ATTL_SELECT_CHOICES)}, "
+                        f"got {value!r}"
+                    )
+                values[field] = choice
+            else:
+                values[field] = _as_int(key, value)
+        except ValueError as exc:
+            raise ValueError(f"{source}: {exc}") from None
+    return FilterThresholds(**values)
+
+
+def read_params_file(path: Path | str) -> dict[str, Any]:
+    """Read search parameters from YAML.
+
+    Takes the flat ``search_params.yaml`` layout. The older pipeline config,
+    with thresholds under ``filters`` and ``reject_ambiguous_n_ie`` at the top
+    level, is read too.
+    """
+    path = Path(path)
+    with path.open() as fh:
+        data = yaml.safe_load(fh) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: expected one 'parameter: value' per line")
+    if isinstance(data.get("filters"), dict):
+        params = dict(data["filters"])
+        if "reject_ambiguous_n_ie" in data:
+            params.setdefault("reject_ambiguous_n_ie", data["reject_ambiguous_n_ie"])
+        return params
+    return data
+
+
+def load_thresholds(path: Path | str | None) -> FilterThresholds:
+    """Load thresholds from ``search_params.yaml``; built-in defaults when ``path`` is None."""
+    if path is None:
         return FilterThresholds()
-    config_path = Path(config_path)
-    if not config_path.is_file():
-        return FilterThresholds()
-    with config_path.open() as fh:
-        cfg = yaml.safe_load(fh) or {}
-    f = cfg.get("filters", {}) or {}
-    return FilterThresholds(
-        shift=int(f.get("v3ps_shift", DEFAULT_SHIFT)),
-        trna_max_distance_bp=int(f.get("trna_max_distance_bp", DEFAULT_TRNA_MAX_DISTANCE_BP)),
-        attl_window_bp=int(f.get("attl_window_bp", DEFAULT_ATTL_WINDOW_BP)),
-        attl_candidate_min_bp=int(f.get("attl_candidate_min_bp", DEFAULT_ATTL_CANDIDATE_MIN_BP)),
-        attl_exact_min_bp=int(f.get("attl_exact_min_bp", DEFAULT_ATTL_EXACT_MIN_BP)),
-        attl_relaxed_min_bp=int(f.get("attl_relaxed_min_bp", DEFAULT_ATTL_RELAXED_MIN_BP)),
-        attl_reject_gapped=bool(f.get("attl_reject_gapped", True)),
-        integrase_min_aa=int(f.get("integrase_min_aa", DEFAULT_INTEGRASE_MIN_AA)),
-        ie_min_nt=int(f.get("ie_min_nt", DEFAULT_IE_MIN_NT)),
-        reject_ambiguous_n_ie=bool(cfg.get("reject_ambiguous_n_ie", False)),
-    )
+    return thresholds_from_params(read_params_file(path), str(path))
+
+
+def thresholds_to_params(thresholds: FilterThresholds) -> dict[str, Any]:
+    """Every ``search_params.yaml`` key with its value in ``thresholds``, in file order."""
+    return {key: getattr(thresholds, field) for key, field in PARAM_FIELDS.items()}
 
 
 def parse_orfs_gff(path: Path | str) -> dict[str, list[tuple[int, int, str, str]]]:
@@ -206,6 +299,8 @@ def _hit_record(best: pd.Series, n_hits: int, tier: str) -> dict[str, Any]:
         "attL_gapopen": int(best["gapopen_n"]),
         "attL_has_gap": length != qspan or length != sspan,
         "attL_pident": float(best["pident"]) if "pident" in best.index else float("nan"),
+        "attL_bitscore": float(best["bitscore"]) if "bitscore" in best.index else float("nan"),
+        "attL_evalue": float(best["evalue"]) if "evalue" in best.index else float("nan"),
         "attL_tier": tier,
         "n_v3ps_hits": int(n_hits),
         "qstart": int(best["qstart"]),
@@ -219,8 +314,15 @@ def select_v3ps_strict_hit(
     trna_strand: str,
     shift: int = DEFAULT_SHIFT,
     min_len_bp: int = 0,
+    select_by: str = DEFAULT_ATTL_SELECT_BY,
 ) -> dict[str, Any] | None:
-    """Longest 3'-anchored, strand-consistent hit of at least ``min_len_bp`` (any identity)."""
+    """Best 3'-anchored, strand-consistent hit of at least ``min_len_bp`` (any identity).
+
+    ``select_by="bitscore"`` takes the highest bitscore, then the longer hit on a
+    tie. ``select_by="length"`` takes the longest hit, as the published finder did.
+    """
+    if select_by not in ATTL_SELECT_CHOICES:
+        raise ValueError(f"select_by must be one of {ATTL_SELECT_CHOICES}, got {select_by!r}")
     if raw_hits is None or raw_hits.empty:
         return None
     kept = _oriented_anchored(raw_hits, trna_len, trna_strand, shift)
@@ -228,7 +330,13 @@ def select_v3ps_strict_hit(
         kept = kept[kept["length"] >= min_len_bp]
     if kept.empty:
         return None
-    best = kept.loc[kept["length"].idxmax()]
+    if select_by == "length":
+        best = kept.loc[kept["length"].idxmax()]
+    else:
+        ranked = kept.assign(_bits=kept["bitscore"].astype(float)).sort_values(
+            ["_bits", "length"], ascending=False, kind="mergesort"
+        )
+        best = ranked.iloc[0]
     return _hit_record(best, len(kept), "candidate")
 
 
@@ -260,13 +368,18 @@ def select_attl_hit(
     trna_strand: str,
     thresholds: FilterThresholds,
 ) -> dict[str, Any] | None:
-    """Longest 3'-anchored BLAST hit of at least ``attl_candidate_min_bp``.
+    """Best 3'-anchored BLAST hit of at least ``attl_candidate_min_bp``.
 
-    This is the reported attL. The exact run, the length gate and the gap check
-    are all applied to it.
+    This is the reported attL, chosen by ``thresholds.attl_select_by``. The exact
+    run, the length gate and the gap check are all applied to it.
     """
     return select_v3ps_strict_hit(
-        raw_hits, trna_len, trna_strand, thresholds.shift, thresholds.attl_candidate_min_bp
+        raw_hits,
+        trna_len,
+        trna_strand,
+        thresholds.shift,
+        thresholds.attl_candidate_min_bp,
+        thresholds.attl_select_by,
     )
 
 
@@ -333,6 +446,8 @@ def evaluate_ie_candidate(
         "attL_gapopen": 0,
         "attL_has_gap": False,
         "attL_pident": float("nan"),
+        "attL_bitscore": float("nan"),
+        "attL_evalue": float("nan"),
         "attL_tier": "",
         "n_v3ps_hits": 0,
         "prodigal_hit_class": "",
@@ -353,7 +468,7 @@ def evaluate_ie_candidate(
         row["reject_reason"] = "v3ps_no_raw_blast"
         return row
 
-    # Reported attL: longest 3'-anchored BLAST hit of at least 8 bp.
+    # Reported attL: best 3'-anchored BLAST hit of at least 8 bp (see attl_select_by).
     chosen = select_attl_hit(raw_hits, trna_len, trna_strand, thresholds)
     if chosen is None:
         row["reject_reason"] = "v3ps_no_strict_hit"

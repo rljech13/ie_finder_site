@@ -253,13 +253,16 @@ def main() -> None:
     parser.add_argument("--mge-gbk", required=True, help="Path to mge_annotated.gbk.")
     parser.add_argument("--orfs-gff", required=True, help="Path to orfs.gff.")
     parser.add_argument("--fasta", required=True, help="Path to the assembly FASTA.")
-    parser.add_argument("--config", default="ie_finder_config.yaml", help="Pipeline config.")
+    parser.add_argument(
+        "--params", "--config", dest="params", default="search_params.yaml",
+        help="Search parameters (search_params.yaml).",
+    )
     parser.add_argument("--out-fa", required=True, help="Output ie_confident.fa path.")
     parser.add_argument("--out-gbk", required=True, help="Output ie_confident.gbk path.")
     parser.add_argument("--out-audit", required=True, help="Output ie_filter_audit.tsv path.")
     args = parser.parse_args()
 
-    thresholds = load_thresholds(Path(args.config))
+    thresholds = load_thresholds(Path(args.params))
     filter_sample(
         sample=args.sample,
         trna_path=Path(args.trna),

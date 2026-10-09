@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Write one text report per genome from the finder working directory.
 
-The report keeps the audit, the published coordinates and any step log that
-actually said something. The tables and logs it reads are deleted with the
-work directory.
+The report keeps the search parameters, the audit, the published coordinates
+and any step log that actually said something. The tables and logs it reads are
+deleted with the work directory.
 """
 
 from __future__ import annotations
@@ -65,6 +65,20 @@ def _candidate_line(row: dict[str, str]) -> str:
     )
 
 
+def _param_lines(path: Path | None) -> list[str]:
+    """``key<TAB>value`` for each ``key: value`` line of a flat YAML file."""
+    if path is None or not path.is_file():
+        return []
+    lines = []
+    for raw in path.read_text(errors="replace").splitlines():
+        text = raw.split(" #", 1)[0].strip()
+        if not text or text.startswith("#") or ":" not in text:
+            continue
+        key, value = text.split(":", 1)
+        lines.append(f"{key.strip()}\t{value.strip()}")
+    return lines
+
+
 def _tsv_block(rows: list[dict[str, str]]) -> str:
     if not rows:
         return "(none)"
@@ -81,8 +95,13 @@ def build_report(
     sample: str,
     mge_finder: str = "",
     upstream_commit: str = "",
+    params_path: Path | None = None,
 ) -> str:
-    """Assemble the report text for one sample directory."""
+    """Assemble the report text for one sample directory.
+
+    ``params_path`` is the search parameters the run used. Its values are
+    listed after the header; the block is left out when the file is absent.
+    """
     integrases = _rows(sample_dir / "integrase_hits_summary.tsv")
     trna = _rows(sample_dir / "integrase_trna.tsv")
     blast = _rows(sample_dir / "mge_blast.tsv")
@@ -96,6 +115,11 @@ def build_report(
         f"code\t{mge_finder}",
         f"upstream_commit\t{upstream_commit}",
         "",
+    ]
+    params = _param_lines(params_path)
+    if params:
+        parts.extend(["search_params", *params, ""])
+    parts += [
         "counts",
         f"integrase_hits\t{len(integrases)}",
         f"trna_pairs\t{len(trna)}",
@@ -127,7 +151,7 @@ def build_report(
     return "\n".join(parts)
 
 
-def write_report(sample_dir: Path, out_path: Path, **kwargs: str) -> None:
+def write_report(sample_dir: Path, out_path: Path, **kwargs) -> None:
     """Write the report for one sample."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(build_report(sample_dir, **kwargs))
@@ -141,6 +165,7 @@ def main() -> None:
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--mge-finder", default="")
     parser.add_argument("--upstream-commit", default="")
+    parser.add_argument("--params", type=Path, default=None, help="Search parameters used by the run.")
     args = parser.parse_args()
     write_report(
         args.sample_dir,
@@ -148,6 +173,7 @@ def main() -> None:
         sample=args.sample,
         mge_finder=args.mge_finder,
         upstream_commit=args.upstream_commit,
+        params_path=args.params,
     )
 
 

@@ -15,6 +15,7 @@ from Bio.SeqRecord import SeqRecord
 from logger import Logger
 from v3ps_filters import (
     DEFAULT_ATTL_CANDIDATE_MIN_BP,
+    DEFAULT_ATTL_SELECT_BY,
     DEFAULT_ATTL_WINDOW_BP,
     DEFAULT_SHIFT,
     load_thresholds,
@@ -154,12 +155,14 @@ def main(
     window_size: int = DEFAULT_ATTL_WINDOW_BP,
     shift: int = DEFAULT_SHIFT,
     min_len_bp: int = DEFAULT_ATTL_CANDIDATE_MIN_BP,
+    select_by: str = DEFAULT_ATTL_SELECT_BY,
 ) -> None:
     """Run attachment-site BLAST for each integrase-tRNA query and write results.
 
     For each tRNA query in ``query_fa``, BLAST is run against a genomic window
-    around the paired integrase. The longest 3'-anchored, strand-consistent hit
-    of at least ``min_len_bp`` is written to ``out_tsv``. All raw hits are
+    around the paired integrase. The best 3'-anchored, strand-consistent hit
+    of at least ``min_len_bp`` is written to ``out_tsv``: the highest bitscore,
+    or the longest hit when ``select_by`` is ``"length"``. All raw hits are
     written to a sibling file with the ``_raw.tsv`` suffix.
 
     Args:
@@ -168,6 +171,7 @@ def main(
         query_fa: Path to ``mge_query.fa`` (tRNA sequences used as BLAST queries).
         out_tsv: Output path for filtered best hits (``mge_blast.tsv``).
         tmp_dir: Directory for temporary BLAST files.
+        select_by: ``"bitscore"`` or ``"length"``; see ``select_v3ps_strict_hit``.
     """
     integrases = load_integrases(integrases_file)
     filtered_records: list[dict] = []
@@ -209,16 +213,13 @@ def main(
         blast_df["wstart"] = window_start
         raw_frames.append(blast_df.copy())
 
-        best = select_v3ps_strict_hit(blast_df, len(rec.seq), strand, shift, min_len_bp)
+        best = select_v3ps_strict_hit(
+            blast_df, len(rec.seq), strand, shift, min_len_bp, select_by
+        )
         if best is None:
             logger.info(f"No strict attachment-site hits for {rec.id}")
             continue
 
-        src = blast_df[
-            (blast_df.qstart.astype(int) == best["qstart"])
-            & (blast_df.qend.astype(int) == best["qend"])
-            & (blast_df.length.astype(int) == best["best_attl_len_bp"])
-        ].iloc[0]
         filtered_records.append({
             "integrase_id": integrase_id,
             "contig": contig,
@@ -228,8 +229,8 @@ def main(
             "length": best["best_attl_len_bp"],
             "mismatch": best["attL_mismatch"],
             "gapopen": best["attL_gapopen"],
-            "evalue": float(src.evalue),
-            "bitscore": float(src.bitscore),
+            "evalue": best["attL_evalue"],
+            "bitscore": best["attL_bitscore"],
             "qstart": best["qstart"],
             "qend": best["qend"],
         })
@@ -259,12 +260,16 @@ if __name__ == "__main__":
     parser.add_argument("--query", required=True, help="mge_query.fa path.")
     parser.add_argument("--out_tsv", required=True, help="Output mge_blast.tsv path.")
     parser.add_argument("--tmp_dir", default=".", help="Temporary directory for BLAST.")
-    parser.add_argument("--config", default="ie_finder_config.yaml", help="Pipeline config.")
+    parser.add_argument(
+        "--params", "--config", dest="params", default="search_params.yaml",
+        help="Search parameters (search_params.yaml).",
+    )
     cli_args = parser.parse_args()
-    thresholds = load_thresholds(cli_args.config)
+    thresholds = load_thresholds(cli_args.params)
     main(
         cli_args.ffn, cli_args.integrases, cli_args.query, cli_args.out_tsv, cli_args.tmp_dir,
         window_size=thresholds.attl_window_bp,
         shift=thresholds.shift,
         min_len_bp=thresholds.attl_candidate_min_bp,
+        select_by=thresholds.attl_select_by,
     )

@@ -1,0 +1,45 @@
+# Search parameters for integrative elements.
+#
+# ./run.sh reads this file. SEARCH_PARAMS=other.yaml ./run.sh ... layers another
+# file on top of it: keys set there win, keys left out keep the values below.
+# An unknown key stops the run. The report lists the values that were used.
+#
+# Same cascade as MGE_finder at the commit in UPSTREAM, without cohort
+# deduplication, with two departures: attL is the best-scoring BLAST hit
+# rather than the longest, and gapped attL alignments are kept. Set
+# attl_select_by: length and attl_reject_gapped: true to reproduce the
+# published rules.
+
+# Integrase and tRNA must be on opposite strands with 3' ends at most this far apart (bp).
+trna_max_distance_bp: 500
+
+# Allowed offset (bp) between a BLAST hit end and the tRNA 3' end. The same
+# offset absorbs indels where the exact run starts.
+v3ps_shift: 3
+
+# Region next to the tRNA searched for attL (bp). Elements longer than this are not found.
+attl_window_bp: 300000
+
+# Minimum exact run from the tRNA 3' end (bp). Shorter BLAST hits are not considered.
+attl_candidate_min_bp: 8
+
+# attL passes the length gate with an exact run of at least this many bp ...
+attl_exact_min_bp: 14
+# ... or with a BLAST hit at least this long, mismatches allowed.
+attl_relaxed_min_bp: 17
+
+# Reject attL alignments that contain gaps.
+attl_reject_gapped: false
+
+# Which 3'-anchored BLAST hit becomes attL: bitscore (best alignment) or
+# length (longest hit, the published rule).
+attl_select_by: bitscore
+
+# Integrases of this length (aa) and shorter are rejected.
+integrase_min_aa: 300
+
+# Minimum element length (bp). 0 disables the filter.
+ie_min_nt: 0
+
+# Reject elements that contain ambiguous N bases.
+reject_ambiguous_n_ie: false
