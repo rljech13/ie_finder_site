@@ -123,7 +123,7 @@ def _read_table(path: Path) -> pd.DataFrame:
     if not path.is_file() or path.stat().st_size == 0:
         return pd.DataFrame()
     try:
-        return pd.read_csv(path, sep="\t")
+        return pd.read_csv(path, sep="\t", dtype={"contig": str})
     except pd.errors.EmptyDataError:
         return pd.DataFrame()
 

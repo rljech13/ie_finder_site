@@ -31,7 +31,7 @@ def closest_trna_rows(trna_path: Path) -> pd.DataFrame:
     Returns:
         DataFrame with at most one row per ``integrase_id``.
     """
-    df = pd.read_csv(trna_path, sep="\t")
+    df = pd.read_csv(trna_path, sep="\t", dtype={"contig": str})
     if df.empty:
         return df
     if "distance" in df.columns:
@@ -66,7 +66,7 @@ def load_raw_blast(raw_path: Path) -> pd.DataFrame:
     """
     if not raw_path.is_file() or raw_path.stat().st_size == 0:
         return pd.DataFrame()
-    return pd.read_csv(raw_path, sep="\t")
+    return pd.read_csv(raw_path, sep="\t", dtype={"contig": str})
 
 
 def filter_sample(

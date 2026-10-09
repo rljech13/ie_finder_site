@@ -26,7 +26,7 @@ def parse_blast(blast_file):
         logger.warning(f"BLAST file {blast_file} is empty. Creating an empty DataFrame.")
         return pd.DataFrame(columns=["integrase_id", "contig", "hit_start", "hit_end", "pident", "length", "evalue", "bitscore"])
     
-    df = pd.read_csv(blast_file, sep='\t', header=0)
+    df = pd.read_csv(blast_file, sep='\t', header=0, dtype={"contig": str})
     if df.empty:
         logger.warning(f"BLAST file {blast_file} contains no data.")
     else:
@@ -62,7 +62,7 @@ def parse_trna(trna_file):
             "contig", "contig_length", "trna_start", "trna_end", "trna_strand", "tRNA_type", "distance"
         ])
     
-    df = pd.read_csv(trna_file, sep='\t', header=0)
+    df = pd.read_csv(trna_file, sep='\t', header=0, dtype={"contig": str})
     if df.empty:
         logger.warning(f"tRNA file {trna_file} contains no data.")
     else:
@@ -167,7 +167,7 @@ def extract_regions(genome_fasta, region_df, out_fa):
     records = SeqIO.to_dict(SeqIO.parse(genome_fasta, "fasta"))
     seq_records = []
     for _, row in region_df.iterrows():
-        contig_id = row['contig_id']
+        contig_id = str(row['contig_id'])
         mge_start = row['mge_start']
         mge_end = row['mge_end']
         if contig_id in records:

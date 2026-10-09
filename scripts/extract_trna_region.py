@@ -21,7 +21,7 @@ def normalize_id(seq_id):
     Returns:
         str: The normalized sequence identifier.
     """
-    return seq_id.strip().lower()
+    return str(seq_id).strip().lower()
 
 
 def get_sequence_for_contig(sequences, contig):
@@ -70,7 +70,8 @@ def extract_trna_sequence(genome_fasta, trna_table_path, out_fa):
     # Load genome sequences and normalize IDs.
     sequences = {normalize_id(rec.id): rec for rec in SeqIO.parse(genome_fasta, "fasta")}
     # Load the tRNA table.
-    trna_df = pd.read_csv(trna_table_path, sep="\t")
+    # Read contig names as text: numeric names like "1" would otherwise become int.
+    trna_df = pd.read_csv(trna_table_path, sep="\t", dtype={"contig": str})
     if trna_df.empty:
         logger.info("tRNA table is empty, creating an empty output file.")
         open(out_fa, "w").close()
@@ -84,10 +85,10 @@ def extract_trna_sequence(genome_fasta, trna_table_path, out_fa):
     for index, row in trna_df.iterrows():
         try:
             integrase_id = row["integrase_id"]
-            contig = row["contig"].strip().rstrip(',')
+            contig = str(row["contig"]).strip().rstrip(',')
             start = int(row["trna_start"])
             end = int(row["trna_end"])
-            strand = row["trna_strand"].strip()
+            strand = str(row["trna_strand"]).strip()
         except Exception as e:
             logger.error(f"Error processing row {row}: {e}")
             continue
