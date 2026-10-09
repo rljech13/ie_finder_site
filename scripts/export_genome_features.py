@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """Write attL/attR on the original assembly, as GFF3 and GenBank.
 
-``mge_annotated.gbk`` and ``ie_confident.gbk`` store the cut-out element after
-it may have been reverse-complemented. Coordinates in those files are local to
-that island. This script reads the audit table, where attL and the tRNA are
-already in 1-based inclusive contig coordinates, and writes features on the
-assembly itself.
+This script reads the audit table, where attL and the tRNA are in 1-based
+inclusive contig coordinates, and writes features on the assembly itself.
 
 Default output is the confident set (the manuscript cascade). ``--all-candidates``
 also writes candidates that have an attL coordinate but failed a later filter.
@@ -91,34 +88,6 @@ def ordered_span(start: int, end: int) -> tuple[int, int]:
     return (start, end) if start <= end else (end, start)
 
 
-def span_from_ie_id(ie_id: object) -> tuple[int, int] | None:
-    """Parse ``integrase:contig:start-end`` as written on ``mge_region.fa`` headers."""
-    text = "" if ie_id is None or (isinstance(ie_id, float) and pd.isna(ie_id)) else str(ie_id)
-    if ":" not in text:
-        return None
-    coords = text.rsplit(":", 1)[-1]
-    if "-" not in coords:
-        return None
-    left, right = coords.split("-", 1)
-    try:
-        start, end = int(left), int(right)
-    except ValueError:
-        return None
-    if start < 1 or end < 1:
-        return None
-    return ordered_span(start, end)
-
-
-def resolve_contig(name: str, records: dict[str, SeqRecord]) -> str | None:
-    """Match an audit contig id to a FASTA record id."""
-    if name in records:
-        return name
-    hits = [key for key in records if key == name or key.startswith(name) or name.startswith(key)]
-    if len(hits) == 1:
-        return hits[0]
-    return None
-
-
 def _read_table(path: Path) -> pd.DataFrame:
     if not path.is_file() or path.stat().st_size == 0:
         return pd.DataFrame()
@@ -195,10 +164,9 @@ def build_elements(
     chosen = select_rows(audit, all_candidates)
     elements: list[dict] = []
     for _, row in chosen.iterrows():
-        contig_name = str(row.get("contig", "")).strip().rstrip(",")
-        contig = resolve_contig(contig_name, records)
-        if contig is None:
-            raise SystemExit(f"Contig {contig_name!r} from the audit is not in the FASTA")
+        contig = str(row.get("contig", "")).strip()
+        if contig not in records:
+            raise SystemExit(f"Contig {contig!r} from the audit is not in the FASTA")
         attl_lo, attl_hi = _int_field(row, "attL_abs_lo"), _int_field(row, "attL_abs_hi")
         trna_lo, trna_hi = _int_field(row, "trna_start"), _int_field(row, "trna_end")
         if None in (attl_lo, attl_hi, trna_lo, trna_hi):
@@ -219,9 +187,6 @@ def build_elements(
         bounds = [attl_start, attl_end, attr_start, attr_end]
         if int_start is not None and int_end is not None:
             bounds.extend([int_start, int_end])
-        island = span_from_ie_id(row.get("ie_id", ""))
-        if island is not None:
-            bounds.extend(island)
         span = (min(bounds), max(bounds))
         passed = "passed_confident" in row.index and as_bool(row["passed_confident"])
         elements.append({

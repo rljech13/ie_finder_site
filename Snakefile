@@ -3,7 +3,7 @@ import glob
 import sys
 
 
-configfile: "ie_finder_config.yaml"
+configfile: os.path.join(workflow.basedir, "ie_finder_config.yaml")
 
 GENOMES_DIR = config["paths"]["genomes_dir"]
 RESULTS_DIR = config["paths"]["results_dir"]
@@ -17,7 +17,9 @@ from v3ps_filters import load_thresholds
 
 # Search thresholds live in their own file. Loading it here stops a run with an
 # unknown key or a bad value before any step starts.
-SEARCH_PARAMS = config["paths"].get("search_params", "search_params.yaml")
+SEARCH_PARAMS = config["paths"].get(
+    "search_params", os.path.join(workflow.basedir, "search_params.yaml")
+)
 THRESHOLDS = load_thresholds(SEARCH_PARAMS)
 
 COMBINED_HMM = os.path.join(RESULTS_DIR, "combined", "pfam_combined.hmm")
@@ -165,77 +167,32 @@ rule extract_trna_region:
 rule blast_mge:
     input:
         fna=os.path.join(GENOMES_DIR, "{sample}.fna"),
-        integrases=os.path.join(RESULTS_DIR, "{sample}", "integrase_hits_summary.tsv"),
         query=os.path.join(RESULTS_DIR, "{sample}", "mge_query.fa"),
         search_params=SEARCH_PARAMS,
     output:
-        blast_tsv=os.path.join(RESULTS_DIR, "{sample}", "mge_blast.tsv"),
         blast_raw=os.path.join(RESULTS_DIR, "{sample}", "mge_blast_raw.tsv"),
     log:
         os.path.join(RESULTS_DIR, "{sample}", "blast_mge.log")
     params:
         finder=FINDER,
+        tmp_dir=os.path.join(RESULTS_DIR, "{sample}"),
     shell:
         """
-        python {params.finder}/annotate_mge_region.py --ffn {input.fna} --integrases {input.integrases} --query {input.query} --out_tsv {output.blast_tsv} --tmp_dir . --params {input.search_params} > {log} 2>&1
-        """
-
-rule extract_mge_region:
-    input:
-        fna=os.path.join(GENOMES_DIR, "{sample}.fna"),
-        blast=os.path.join(RESULTS_DIR, "{sample}", "mge_blast.tsv"),
-        trna=os.path.join(RESULTS_DIR, "{sample}", "integrase_trna.tsv")
-    output:
-        mge_fa=os.path.join(RESULTS_DIR, "{sample}", "mge_region.fa")
-    log:
-        os.path.join(RESULTS_DIR, "{sample}", "extract_mge_region.log")
-    params:
-        finder=FINDER
-    shell:
-        """
-        python {params.finder}/extract_mge_regions.py --fna {input.fna} --blast {input.blast} --trna {input.trna} --out_fa {output.mge_fa} > {log} 2>&1
-        """
-
-rule annotate_mge:
-    input:
-        fasta=os.path.join(RESULTS_DIR, "{sample}", "mge_region.fa"),
-        trna=os.path.join(RESULTS_DIR, "{sample}", "mge_query.fa"),
-        orf=os.path.join(RESULTS_DIR, "{sample}", "integrase_hits_summary.tsv"),
-        blast=os.path.join(RESULTS_DIR, "{sample}", "mge_blast.tsv")
-    output:
-        gbk=os.path.join(RESULTS_DIR, "{sample}", "mge_annotated.gbk"),
-        att=os.path.join(RESULTS_DIR, "{sample}", "attachment_sites.tsv")
-    log:
-        os.path.join(RESULTS_DIR, "{sample}", "annotate_mge.log")
-    params:
-        finder=FINDER
-    shell:
-        """
-        python {params.finder}/annotate_and_orient_mge.py \
-            --fasta {input.fasta} \
-            --trna_fa {input.trna} \
-            --integrase {input.orf} \
-            --blast {input.blast} \
-            --out_gbk {output.gbk} \
-            --out_att {output.att} > {log} 2>&1
+        python {params.finder}/annotate_mge_region.py --ffn {input.fna} --query {input.query} --out_tsv {output.blast_raw} --tmp_dir {params.tmp_dir} --params {input.search_params} > {log} 2>&1
         """
 
 # Same cascade as the manuscript finder, without the cohort deduplication:
-# exact duplication >= 8 bp, integrase > 300 aa, attL non-coding,
-# exact run >= 14 bp or BLAST length >= 17 bp, no alignment gaps.
+# exact duplication, integrase length, attL non-coding, attL length, and
+# optionally no alignment gaps. Thresholds are in search_params.yaml.
 rule filter_confident_ie:
     input:
         trna=os.path.join(RESULTS_DIR, "{sample}", "integrase_trna.tsv"),
         integrase_hits=os.path.join(RESULTS_DIR, "{sample}", "integrase_hits_summary.tsv"),
         blast_raw=os.path.join(RESULTS_DIR, "{sample}", "mge_blast_raw.tsv"),
-        mge_fa=os.path.join(RESULTS_DIR, "{sample}", "mge_region.fa"),
-        mge_gbk=os.path.join(RESULTS_DIR, "{sample}", "mge_annotated.gbk"),
         orfs_gff=os.path.join(RESULTS_DIR, "{sample}", "orfs.gff"),
         fasta=os.path.join(GENOMES_DIR, "{sample}.fna"),
         search_params=SEARCH_PARAMS,
     output:
-        fa=os.path.join(RESULTS_DIR, "{sample}", "ie_confident.fa"),
-        gbk=os.path.join(RESULTS_DIR, "{sample}", "ie_confident.gbk"),
         audit=os.path.join(RESULTS_DIR, "{sample}", "ie_filter_audit.tsv"),
     log:
         os.path.join(RESULTS_DIR, "{sample}", "filter_confident_ie.log")
@@ -248,13 +205,9 @@ rule filter_confident_ie:
             --trna {input.trna} \
             --integrase-hits {input.integrase_hits} \
             --blast-raw {input.blast_raw} \
-            --mge-fa {input.mge_fa} \
-            --mge-gbk {input.mge_gbk} \
             --orfs-gff {input.orfs_gff} \
             --fasta {input.fasta} \
             --params {input.search_params} \
-            --out-fa {output.fa} \
-            --out-gbk {output.gbk} \
             --out-audit {output.audit} \
             > {log} 2>&1
         """

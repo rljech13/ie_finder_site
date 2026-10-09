@@ -268,6 +268,7 @@ fi
 
 PYTHONWARNINGS="${PYTHONWARNINGS:-ignore::FutureWarning}" "$SM" \
   --snakefile "$SCRIPT_DIR/Snakefile" \
+  --directory "$WORK" \
   --configfile "$CONFIG" \
   --cores "$(nproc)" \
   --printshellcmds \

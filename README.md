@@ -53,7 +53,7 @@ Each element has four features:
 
 `confidence=confident` passed the filter. A run with no confident element still writes a valid GFF3 header and an empty GenBank, plus a report that says so.
 
-Intermediate tables, BLAST output, and the cut-out island sequences are written to a temporary directory and removed when the run succeeds. Do not publish those island GenBank files: their coordinates are local to the extracted sequence, which may have been reverse-complemented. Only `*.ie.gff3` and `*.ie.gbk` use the assembly coordinates.
+Intermediate tables and BLAST output are written to a temporary directory and removed when the run succeeds.
 
 ## Options
 

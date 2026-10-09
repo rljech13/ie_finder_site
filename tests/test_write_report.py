@@ -20,7 +20,6 @@ class WriteReportTest(unittest.TestCase):
             (sample / "integrase_trna.tsv").write_text(
                 "integrase_id\ttrna_start\ncontig_1\t10\ncontig_2\t20\n"
             )
-            (sample / "mge_blast.tsv").write_text("integrase_id\ncontig_1\n")
             (sample / "ie_filter_audit.tsv").write_text(
                 "integrase_id\tpassed_confident\treject_reason\tattL_abs_lo\tattL_abs_hi\t"
                 "attL_strand\ttrna_start\ttrna_end\ttrna_strand\tintegrase_len_aa\t"

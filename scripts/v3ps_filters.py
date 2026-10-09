@@ -9,9 +9,10 @@
 5. attL length: exact run of at least ``attl_exact_min_bp``, or the less
    specific search — BLAST length, mismatches allowed — of at least
    ``attl_relaxed_min_bp``.
-6. No alignment gaps: the alignment length equals both the query span and the
-   subject span.
-7. Deduplication (``dedup_ie_representatives``).
+6. No alignment gaps, only when ``attl_reject_gapped`` is set: the alignment
+   length equals both the query span and the subject span.
+
+Cohort deduplication from MGE_finder is not part of this copy.
 
 Every candidate gets a full audit row. ``reject_reason`` is the first failing
 step in the order above.
@@ -77,7 +78,7 @@ class FilterThresholds:
     attl_candidate_min_bp: int = DEFAULT_ATTL_CANDIDATE_MIN_BP
     attl_exact_min_bp: int = DEFAULT_ATTL_EXACT_MIN_BP
     attl_relaxed_min_bp: int = DEFAULT_ATTL_RELAXED_MIN_BP
-    attl_reject_gapped: bool = True
+    attl_reject_gapped: bool = False
     integrase_min_aa: int = DEFAULT_INTEGRASE_MIN_AA
     ie_min_nt: int = DEFAULT_IE_MIN_NT
     reject_ambiguous_n_ie: bool = False
@@ -383,6 +384,13 @@ def select_attl_hit(
     )
 
 
+def closest_trna_rows(pairs: pd.DataFrame) -> pd.DataFrame:
+    """One integrase-tRNA pair per integrase: the tRNA with the smallest ``distance``."""
+    if pairs.empty or "distance" not in pairs.columns:
+        return pairs
+    return pairs.loc[pairs.groupby("integrase_id")["distance"].idxmin()]
+
+
 def integrase_aa_length(start: int, end: int) -> int:
     """Protein length from ORF nucleotide span (1-based inclusive): span // 3.
 
@@ -413,29 +421,30 @@ def evaluate_ie_candidate(
     trna_len: int,
     integrase_start: int,
     integrase_end: int,
-    ie_id: str | None,
-    ie_len_nt: int | None,
-    ie_has_n: bool,
     raw_hits: pd.DataFrame | None,
-    attl_seq: str = "",
-    trna_seq: str = "",
-    contig_seq: str = "",
+    contig_seq: str,
     cds_by_contig: dict[str, list[tuple[int, int, str, str]]],
     thresholds: FilterThresholds,
 ) -> dict[str, Any]:
-    """Evaluate one candidate against every filter; ``reject_reason`` is the first failure."""
+    """Evaluate one candidate against every filter; ``reject_reason`` is the first failure.
+
+    ``contig_seq`` is the upper-case contig sequence. The attL repeat, the
+    element length and the N check are all read from it.
+    """
     aa_len = integrase_aa_length(integrase_start, integrase_end)
     row: dict[str, Any] = {
         "integrase_id": integrase_id,
-        "ie_id": ie_id or "",
+        "ie_id": "",
         "contig": contig,
         "trna_start": trna_start,
         "trna_end": trna_end,
         "trna_strand": trna_strand,
         "trna_len": trna_len,
         "integrase_len_aa": aa_len,
-        "ie_len_nt": ie_len_nt if ie_len_nt is not None else 0,
-        "ie_has_ambiguous_n": ie_has_n,
+        "ie_len_nt": 0,
+        # True until the element span is known, so an element without one never
+        # passes reject_ambiguous_n_ie.
+        "ie_has_ambiguous_n": True,
         "candidate_attl_len_bp": 0,
         "exact_anchored_bp": 0,
         "best_attl_len_bp": 0,
@@ -475,20 +484,20 @@ def evaluate_ie_candidate(
         return row
     row.update(chosen)
     row["candidate_attl_len_bp"] = chosen["best_attl_len_bp"]
-    # The cut-out island does not always contain the BLAST hit: on a minus-strand
-    # tRNA the extract starts at hit_end, so the first bases are not attL.
-    # Measure the repeat on the assembly instead.
-    if contig_seq:
-        lo, hi = int(chosen["attL_abs_lo"]), int(chosen["attL_abs_hi"])
-        if 1 <= lo <= hi <= len(contig_seq):
-            attl_seq = contig_seq[lo - 1:hi]
-        ts, te = int(trna_start), int(trna_end)
-        if ts > te:
-            ts, te = te, ts
-        if 1 <= ts <= te <= len(contig_seq):
-            trna_seq = contig_seq[ts - 1:te]
+    attl_lo, attl_hi = int(chosen["attL_abs_lo"]), int(chosen["attL_abs_hi"])
+    trna_lo, trna_hi = sorted((int(trna_start), int(trna_end)))
+    attl_seq = contig_seq[attl_lo - 1:attl_hi] if 1 <= attl_lo <= attl_hi <= len(contig_seq) else ""
+    trna_seq = contig_seq[trna_lo - 1:trna_hi] if 1 <= trna_lo <= trna_hi <= len(contig_seq) else ""
     exact = exact_anchored_run(attl_seq, trna_seq, trna_strand, thresholds.shift) if attl_seq and trna_seq else 0
     row["exact_anchored_bp"] = exact
+
+    # The element runs from attR to attL and contains the integrase; this is
+    # the span written to the GFF3.
+    ie_lo = min(attl_lo, trna_lo, int(integrase_start), int(integrase_end))
+    ie_hi = max(attl_hi, trna_hi, int(integrase_start), int(integrase_end))
+    row["ie_id"] = f"{integrase_id}:{contig}:{ie_lo}-{ie_hi}"
+    row["ie_len_nt"] = ie_hi - ie_lo + 1
+    row["ie_has_ambiguous_n"] = "N" in contig_seq[ie_lo - 1:ie_hi]
 
     # 2. Exact duplication of at least 8 bp.
     row["passed_candidate"] = exact >= thresholds.attl_candidate_min_bp
@@ -502,11 +511,6 @@ def evaluate_ie_candidate(
 
     # 4. attL in a non-coding region.
     cds_list = cds_by_contig.get(contig, [])
-    if not cds_list:
-        for key, val in cds_by_contig.items():
-            if contig in key or key in contig:
-                cds_list = val
-                break
     prodigal = classify_prodigal_overlap(chosen["attL_abs_lo"], chosen["attL_abs_hi"], cds_list)
     row.update(prodigal)
     row["passed_intergenic"] = prodigal["prodigal_hit_class"] == "intergenic"
@@ -525,13 +529,13 @@ def evaluate_ie_candidate(
     row["passed_no_gap"] = (not thresholds.attl_reject_gapped) or (not chosen["attL_has_gap"])
     if not row["passed_no_gap"]:
         reasons.append("attl_gapped")
-    row["passed_no_ambiguous_n"] = (not thresholds.reject_ambiguous_n_ie) or (not ie_has_n)
+    row["passed_no_ambiguous_n"] = (not thresholds.reject_ambiguous_n_ie) or (not row["ie_has_ambiguous_n"])
     if not row["passed_no_ambiguous_n"]:
         reasons.append("ambiguous_n")
 
     # optional element length
     if thresholds.ie_min_nt > 0:
-        row["passed_ie_len"] = ie_len_nt is not None and ie_len_nt >= thresholds.ie_min_nt
+        row["passed_ie_len"] = row["ie_len_nt"] >= thresholds.ie_min_nt
     else:
         row["passed_ie_len"] = True
     if not row["passed_ie_len"]:

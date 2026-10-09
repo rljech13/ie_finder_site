@@ -12,6 +12,8 @@ import argparse
 import csv
 from pathlib import Path
 
+import yaml
+
 STEP_LOGS = (
     "predict_orfs.log",
     "hmm_search.log",
@@ -19,8 +21,6 @@ STEP_LOGS = (
     "trna_proximity.log",
     "extract_trna_region.log",
     "blast_mge.log",
-    "extract_mge_region.log",
-    "annotate_mge.log",
     "filter_confident_ie.log",
     "export_genome_features.log",
 )
@@ -66,16 +66,17 @@ def _candidate_line(row: dict[str, str]) -> str:
 
 
 def _param_lines(path: Path | None) -> list[str]:
-    """``key<TAB>value`` for each ``key: value`` line of a flat YAML file."""
+    """``key<TAB>value`` for each entry of a flat YAML file."""
     if path is None or not path.is_file():
         return []
+    data = yaml.safe_load(path.read_text(errors="replace")) or {}
+    if not isinstance(data, dict):
+        return []
     lines = []
-    for raw in path.read_text(errors="replace").splitlines():
-        text = raw.split(" #", 1)[0].strip()
-        if not text or text.startswith("#") or ":" not in text:
-            continue
-        key, value = text.split(":", 1)
-        lines.append(f"{key.strip()}\t{value.strip()}")
+    for key, value in data.items():
+        if isinstance(value, bool):
+            value = "true" if value else "false"
+        lines.append(f"{key}\t{value}")
     return lines
 
 
@@ -104,11 +105,12 @@ def build_report(
     """
     integrases = _rows(sample_dir / "integrase_hits_summary.tsv")
     trna = _rows(sample_dir / "integrase_trna.tsv")
-    blast = _rows(sample_dir / "mge_blast.tsv")
     audit = _rows(sample_dir / "ie_filter_audit.tsv")
     sites = _rows(sample_dir / "attachment_sites_genome.tsv")
     n_pass = sum(1 for row in audit if _passed(row.get("passed_confident", "")))
     n_fail = len(audit) - n_pass
+    # Candidates with an attL hit carry its coordinate; the others have 0 or nothing.
+    n_attl = sum(1 for row in audit if row.get("attL_abs_lo", "").strip() not in {"", "0"})
 
     parts = [
         f"sample\t{sample}",
@@ -123,7 +125,7 @@ def build_report(
         "counts",
         f"integrase_hits\t{len(integrases)}",
         f"trna_pairs\t{len(trna)}",
-        f"attL_blast_hits\t{len(blast)}",
+        f"attL_blast_hits\t{n_attl}",
         f"audit_rows\t{len(audit)}",
         f"confident\t{n_pass}",
         f"rejected\t{n_fail}",

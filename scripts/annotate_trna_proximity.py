@@ -4,9 +4,9 @@ import argparse
 import csv
 import re
 import subprocess
-from logger import Logger
+from logger import get_logger
 
-logger = Logger(name="trna_proximity", level=Logger.Level.INFO).get_logger()
+logger = get_logger("trna_proximity")
 
 
 def parse_integrases(integrase_file):
@@ -30,7 +30,7 @@ def parse_integrases(integrase_file):
                 row['start'] = int(row['start'])
                 row['end'] = int(row['end'])
                 row['contig_length'] = int(row['contig_length'])
-                row['contig_id'] = row['contig_id'].strip().rstrip(',')
+                row['contig_id'] = row['contig_id'].strip()
                 integrases.append(row)
             except Exception as e:
                 logger.error(f"Error processing integrase row {row}: {e}")
@@ -70,7 +70,7 @@ def parse_trna(trna_file):
         if line.startswith('>'):
             # Extract contig ID from header (first token)
             parts = line[1:].split()
-            current_contig = parts[0].strip().rstrip(',')
+            current_contig = parts[0].strip()
             i += 1
             if i >= len(lines):
                 break
@@ -175,14 +175,14 @@ def find_nearby_trnas(integrases, trnas, max_distance=500):
     """
     logger.info("Searching for tRNAs near integrases...")
     results = []
-    # Group tRNA entries by contig (normalized by stripping)
+    # Group tRNA entries by contig
     trna_by_contig = {}
     for t in trnas:
-        c = t['contig'].strip().rstrip(',')
+        c = t['contig'].strip()
         trna_by_contig.setdefault(c, []).append(t)
     
     for integ in integrases:
-        c = integ['contig_id'].strip().rstrip(',')
+        c = integ['contig_id'].strip()
         if c not in trna_by_contig:
             continue
         eff_integ = effective_coord_integrase(integ)
@@ -249,7 +249,7 @@ def write_results(results, output_file):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Find tRNAs located within 500 nucleotides of integrases"
+        description="Find tRNAs on the opposite strand within --max_distance nt of integrases"
     )
     parser.add_argument("--integrases", required=True,
                         help="TSV file with integrase data (e.g., integrase_hits_summary.tsv)")

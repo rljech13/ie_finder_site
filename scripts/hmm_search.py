@@ -6,9 +6,9 @@ import subprocess
 import argparse
 from datetime import datetime
 from pathlib import Path
-from logger import Logger
+from logger import get_logger
 
-logger = Logger(name="hmm_search").get_logger()
+logger = get_logger("hmm_search")
 
 
 HMMSCAN_LONG_SEQ_MSG = "Target sequence length > 100K"
